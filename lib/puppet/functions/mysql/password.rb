@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'digest/sha1'
-require 'digest/sha256'
+require 'digest/sha2'
 require 'securerandom'
 
 # @summary
