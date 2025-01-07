@@ -45,6 +45,44 @@ shared_examples 'mysql::password function' do
   end
 end
 
+context 'with caching_sha2_password plugin' do
+  before(:each) do
+    # Mock the @plugin instance variable
+    allow_any_instance_of(subject).to receive(:instance_variable_get).with(:@plugin).and_return('caching_sha2_password')
+  end
+
+  it 'generates a SHA256 hash for a regular password' do
+    result = subject.execute('password')
+    expect(result).to match(/^\$A\$005\$[A-Za-z0-9.\/]{20}[A-Za-z0-9.\/]{43}$/)
+  end
+
+  it 'returns an empty string for an empty password' do
+    is_expected.to run.with_params('').and_return('')
+  end
+
+  it 'generates different hashes for the same password due to salt' do
+    result1 = subject.execute('password')
+    result2 = subject.execute('password')
+    expect(result1).not_to eq(result2)
+  end
+
+  it 'accepts password as Sensitive' do
+    result = subject.execute(sensitive('password'))
+    expect(result).to match(/^\$A\$005\$[A-Za-z0-9.\/]{20}[A-Za-z0-9.\/]{43}$/)
+  end
+
+  it 'returns Sensitive with sensitive=true' do
+    result = subject.execute('password', true)
+    expect(result).to be_a(Puppet::Pops::Types::PSensitiveType::Sensitive)
+    expect(result.unwrap).to match(/^\$A\$005\$[A-Za-z0-9.\/]{20}[A-Za-z0-9.\/]{43}$/)
+  end
+
+  it 'does not convert a password that is already a hash' do
+    hash = '$A$005$ABCDEFGHIJKLMNOPQRST123456789012345678901234567890123'
+    expect(subject.execute(hash)).to eq(hash)
+  end
+end
+
 describe 'mysql::password' do
   it_behaves_like 'mysql::password function'
 

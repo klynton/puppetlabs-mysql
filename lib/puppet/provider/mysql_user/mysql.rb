@@ -77,11 +77,24 @@ Puppet::Type.type(:mysql_user).provide(:mysql, parent: Puppet::Provider::Mysql) 
     if !plugin.nil?
       if password_hash.nil?
         self.class.mysql_caller("CREATE USER '#{merged_name}' IDENTIFIED WITH '#{plugin}'", 'system')
+      elsif plugin.eql? 'caching_sha2_password'
+        self.class.mysql_caller("CREATE USER '#{merged_name}' IDENTIFIED WITH '#{plugin}' AS '#{password_hash}'", 'system')
       else
         self.class.mysql_caller("CREATE USER '#{merged_name}' IDENTIFIED WITH '#{plugin}' AS '#{password_hash}'", 'system')
       end
       @property_hash[:ensure] = :present
       @property_hash[:plugin] = plugin
+    elsif newer_than('mysql' => '8.4.0', 'percona' => '8.4.0')
+      # For MySQL/Percona 8.4+, use caching_sha2_password by default
+      self.class.mysql_caller("CREATE USER IF NOT EXISTS '#{merged_name}' IDENTIFIED WITH 'caching_sha2_password' AS '#{password_hash}'", 'system')
+      @property_hash[:ensure] = :present
+      @property_hash[:password_hash] = password_hash
+      @property_hash[:plugin] = 'caching_sha2_password'
+    elsif newer_than('mysql' => '8.0.0', 'percona' => '8.0.0')
+      # For MySQL/Percona 8.0+, use default authentication plugin
+      self.class.mysql_caller("CREATE USER IF NOT EXISTS '#{merged_name}' IDENTIFIED BY PASSWORD '#{password_hash}'", 'system')
+      @property_hash[:ensure] = :present
+      @property_hash[:password_hash] = password_hash
     elsif newer_than('mysql' => '5.7.6', 'percona' => '5.7.6', 'mariadb' => '10.1.3')
       self.class.mysql_caller("CREATE USER IF NOT EXISTS '#{merged_name}' IDENTIFIED WITH 'mysql_native_password' AS '#{password_hash}'", 'system')
       @property_hash[:ensure] = :present
@@ -160,8 +173,8 @@ Puppet::Type.type(:mysql_user).provide(:mysql, parent: Puppet::Provider::Mysql) 
       end
       self.class.mysql_caller(sql, 'system')
     elsif !mysqld_version.nil? && newer_than('mysql' => '5.7.6', 'percona' => '5.7.6', 'mariadb' => '10.2.0')
-      raise ArgumentError, _('Only mysql_native_password (*ABCD...XXX) hashes are supported.') unless %r{^\*|^$}.match?(string)
-
+      raise ArgumentError, _('Only mysql_native_password (*ABCD...XXX) or caching_sha2_password ($A$005$...XXX) hashes are supported.') unless
+      %r{^\*|^$}.match?(string) || %r{^\*|^\$A\$005\$|^$}.match?(string)
       self.class.mysql_caller("ALTER USER #{merged_name} IDENTIFIED WITH mysql_native_password AS '#{string}'", 'system')
     else
       # default ... if mysqld_version does not work
@@ -225,7 +238,18 @@ Puppet::Type.type(:mysql_user).provide(:mysql, parent: Puppet::Provider::Mysql) 
       end
     elsif newer_than('mysql' => '5.7.6', 'percona' => '5.7.6', 'mariadb' => '10.2.0')
       sql = "ALTER USER #{merged_name} IDENTIFIED WITH '#{string}'"
-      sql += " AS '#{@resource[:password_hash]}'" if string == 'mysql_native_password'
+      if string == 'mysql_native_password'
+        sql += " AS '#{@resource[:password_hash]}'"
+      elsif string == 'caching_sha2_password'
+        sql += " AS '#{@resource[:password_hash]}'"
+      end
+    elsif newer_than('mysql' => '8.4.0', 'percona' => '8.4.0')
+      sql = "ALTER USER #{merged_name} IDENTIFIED WITH '#{string}'"
+      if string == 'mysql_native_password'
+        sql += " AS '#{@resource[:password_hash]}'"
+      elsif string == 'caching_sha2_password'
+        sql += " AS '#{@resource[:password_hash]}'"
+      end
     else
       # See https://bugs.mysql.com/bug.php?id=67449
       sql = "UPDATE mysql.user SET plugin = '#{string}'"
